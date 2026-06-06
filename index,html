@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>WHOIS 域名查询</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  min-height: 100vh;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: #101827;
+  color: #fff;
+  padding: 72px 16px;
+}
+.container {
+  width: min(880px, 100%);
+  margin: 0 auto;
+}
+.header {
+  text-align: center;
+  margin-bottom: 28px;
+}
+.header h1 {
+  font-size: 2rem;
+  margin-bottom: 8px;
+}
+.header p {
+  color: rgba(255,255,255,.72);
+}
+.card {
+  background: rgba(255,255,255,.1);
+  border: 1px solid rgba(255,255,255,.16);
+  border-radius: 16px;
+  padding: 18px;
+  box-shadow: 0 20px 60px rgba(0,0,0,.28);
+}
+.search {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+input {
+  flex: 1;
+  min-width: 0;
+  padding: 15px 16px;
+  border: 1px solid rgba(255,255,255,.16);
+  border-radius: 10px;
+  outline: none;
+  background: rgba(255,255,255,.12);
+  color: #fff;
+  font-size: 1rem;
+}
+input::placeholder { color: rgba(255,255,255,.48); }
+button {
+  border: 0;
+  border-radius: 10px;
+  padding: 0 22px;
+  background: #5b7cfa;
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+button:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+.section {
+  margin-top: 18px;
+}
+.row {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(255,255,255,.1);
+}
+.row:last-child { border-bottom: 0; }
+.label {
+  color: rgba(255,255,255,.62);
+}
+.value {
+  word-break: break-word;
+}
+.tag {
+  display: inline-block;
+  margin: 3px 5px 3px 0;
+  padding: 5px 9px;
+  border-radius: 7px;
+  background: rgba(91,124,250,.18);
+  border: 1px solid rgba(91,124,250,.35);
+}
+.ai-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+.ai-item {
+  background: rgba(255,255,255,.07);
+  border: 1px solid rgba(255,255,255,.1);
+  border-radius: 12px;
+  padding: 14px;
+}
+.ai-title {
+  font-weight: 700;
+  margin-bottom: 7px;
+}
+.score {
+  font-size: 2.2rem;
+  font-weight: 800;
+  color: #8fb3ff;
+}
+.error {
+  color: #fecaca;
+}
+.muted {
+  color: rgba(255,255,255,.62);
+}
+@media (max-width: 640px) {
+  body { padding-top: 40px; }
+  .search { flex-direction: column; }
+  button { height: 48px; }
+  .row { grid-template-columns: 1fr; gap: 4px; }
+  .ai-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>WHOIS 域名查询</h1>
+    <p>查询域名注册信息，并生成 AI 分析</p>
+  </div>
+
+  <div class="card">
+    <div class="search">
+      <input id="domainInput" placeholder="请输入域名，例如：example.com" autocomplete="off" />
+      <button id="searchBtn">查询</button>
+    </div>
+  </div>
+
+  <div id="resultArea" class="section"></div>
+  <div id="aiArea" class="section"></div>
+</div>
+
+<script>
+const WHOIS_API_BASE = 'https://whois.uoec.edu.kg';
+const AI_API_URL = '/ai-proxy.php';
+const MODEL_NAME = 'glm-4.5-flash';
+
+const fieldMap = {
+  "Domain Name": "域名",
+  "Registrar": "注册商",
+  "Registrar IANA ID": "注册商 IANA ID",
+  "Registrar WHOIS Server": "WHOIS 服务器",
+  "Registrar URL": "注册商网址",
+  "Domain Status": "域名状态",
+  "Creation Date": "创建时间",
+  "Registry Expiry Date": "到期时间",
+  "Updated Date": "更新时间",
+  "Name Server": "DNS 服务器",
+  "DNSSEC": "DNSSEC",
+  "Last Update of Database": "数据库更新时间"
+};
+
+let lastDomain = '';
+let lastWhoisData = null;
+
+const $ = id => document.getElementById(id);
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, c => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }[c]));
+}
+
+function normalizeDomain(input) {
+  return input
+    .trim()
+    .replace(/^https?:\/\//i, '')
+    .replace(/^www\./i, '')
+    .replace(/\/.*$/, '')
+    .trim()
+    .toLowerCase();
+}
+
+function isValidDomain(domain) {
+  return /^([a-z0-9\u4e00-\u9fa5]([a-z0-9\u4e00-\u9fa5-]{0,61}[a-z0-9\u4e00-\u9fa5])?\.)+[a-z\u4e00-\u9fa5]{2,}$/i.test(domain);
+}
+
+function formatValue(key, value) {
+  if (value === null || value === undefined || value === '') {
+    return '<span class="muted">无</span>';
+  }
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) return '<span class="muted">无</span>';
+    return value.map(item => `<span class="tag">${escapeHtml(item)}</span>`).join('');
+  }
+
+  return escapeHtml(value);
+}
+
+function renderError(message) {
+  $('resultArea').innerHTML = `<div class="card error">${escapeHtml(message)}</div>`;
+}
+
+function renderWhois(data) {
+  const orderedKeys = Object.keys(fieldMap).filter(key => key in data);
+  const otherKeys = Object.keys(data).filter(key => !(key in fieldMap));
+  const keys = [...orderedKeys, ...otherKeys];
+
+  const rows = keys.map(key => `
+    <div class="row">
+      <div class="label">${escapeHtml(fieldMap[key] || key)}</div>
+      <div class="value">${formatValue(key, data[key])}</div>
+    </div>
+  `).join('');
+
+  $('resultArea').innerHTML = `
+    <div class="card">
+      <h2 style="font-size:1.2rem;margin-bottom:12px;">查询结果</h2>
+      ${rows}
+    </div>
+  `;
+}
+
+function buildPrompt(domain, whoisData) {
+  const registered = !!whoisData;
+  const context = registered
+    ? `域名状态：已注册\nWHOIS 数据：\n${JSON.stringify(whoisData, null, 2)}`
+    : `域名状态：未注册或无 WHOIS 数据。请只分析域名本身。注册商、DNSSEC、NS 分析填“无”。`;
+
+  return `你是一名资深域名分析专家。请分析域名 "${domain}"。
+
+${context}
+
+请严格返回合法 JSON，不要 Markdown，不要额外说明。格式如下：
+{
+  "score": 0到100的整数,
+  "grade": "优秀 / 良好 / 一般 / 较差",
+  "domain_analysis": "域名本身分析，80字以内",
+  "registrar_analysis": "注册商分析，未注册填无，60字以内",
+  "dnssec_analysis": "DNSSEC 分析，未注册填无，60字以内",
+  "ns_analysis": "NS 服务器分析，未注册填无，80字以内",
+  "comment": "综合建议，100字以内"
+}`;
+}
+
+async function queryWhois() {
+  const btn = $('searchBtn');
+  const domain = normalizeDomain($('domainInput').value);
+
+  $('aiArea').innerHTML = '';
+  $('resultArea').innerHTML = '';
+
+  if (!domain) {
+    renderError('请输入域名，例如 example.com');
+    return;
+  }
+
+  if (!isValidDomain(domain)) {
+    renderError(`域名格式不正确：${domain}`);
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = '查询中...';
+  $('resultArea').innerHTML = '<div class="card muted">正在查询 WHOIS 信息...</div>';
+
+  try {
+    const res = await fetch(`${WHOIS_API_BASE}/${encodeURIComponent(domain)}`);
+
+    if (res.status === 404) {
+      $('resultArea').innerHTML = '<div class="card muted">未查询到 WHOIS 信息，可能尚未注册。</div>';
+      lastDomain = domain;
+      lastWhoisData = null;
+      await runAIAnalysis(domain, null);
+      return;
+    }
+
+    if (!res.ok) {
+      throw new Error(`WHOIS 服务返回 HTTP ${res.status}`);
+    }
+
+    const data = await res.json();
+
+    if (!data || Object.keys(data).length === 0 || data.error || data.Error) {
+      $('resultArea').innerHTML = '<div class="card muted">未查询到有效 WHOIS 信息。</div>';
+      lastDomain = domain;
+      lastWhoisData = null;
+      await runAIAnalysis(domain, null);
+      return;
+    }
+
+    renderWhois(data);
+    lastDomain = domain;
+    lastWhoisData = data;
+    await runAIAnalysis(domain, data);
+  } catch (error) {
+    renderError(error.message || '查询失败');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '查询';
+  }
+}
+
+async function runAIAnalysis(domain, whoisData) {
+  $('aiArea').innerHTML = '<div class="card muted">AI 正在分析，请稍候...</div>';
+
+  try {
+    const res = await fetch(AI_API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: MODEL_NAME,
+        messages: [
+          { role: 'system', content: '你是一名资深域名分析专家，只返回严格 JSON。' },
+          { role: 'user', content: buildPrompt(domain, whoisData) }
+        ],
+        temperature: 0.7,
+        max_tokens: 1200,
+        response_format: { type: 'json_object' }
+      })
+    });
+
+    const raw = await res.text();
+
+    if (!res.ok) {
+      let message = `AI 代理返回 HTTP ${res.status}`;
+      try {
+        const json = JSON.parse(raw);
+        message = json.error || json.message || message;
+      } catch {}
+      throw new Error(message);
+    }
+
+    const json = JSON.parse(raw);
+    const content = json.choices?.[0]?.message?.content;
+
+    if (!content) {
+      throw new Error('AI 返回内容为空');
+    }
+
+    const cleaned = content.trim().replace(/^```json/i, '').replace(/^```/i, '').replace(/```$/i, '').trim();
+    const data = JSON.parse(cleaned);
+
+    renderAIResult(data, !!whoisData);
+  } catch (error) {
+    $('aiArea').innerHTML = `
+      <div class="card error">
+        AI 分析失败：${escapeHtml(error.message || '未知错误')}
+        <div style="margin-top:12px;">
+          <button id="retryAiBtn">重新分析</button>
+        </div>
+      </div>
+    `;
+
+    $('retryAiBtn').addEventListener('click', () => runAIAnalysis(lastDomain, lastWhoisData));
+  }
+}
+
+function renderAIResult(data, registered) {
+  const score = Math.max(0, Math.min(100, parseInt(data.score, 10) || 0));
+
+  $('aiArea').innerHTML = `
+    <div class="card">
+      <h2 style="font-size:1.2rem;margin-bottom:12px;">AI 智能分析</h2>
+      <div class="muted">模型：${escapeHtml(MODEL_NAME)} · ${registered ? '已注册' : '未注册'}</div>
+
+      <div style="margin:18px 0;">
+        <div class="score">${score}</div>
+        <div>${escapeHtml(data.grade || '')}</div>
+        <div class="muted" style="margin-top:8px;">${escapeHtml(data.comment || '')}</div>
+      </div>
+
+      <div class="ai-grid">
+        <div class="ai-item">
+          <div class="ai-title">域名分析</div>
+          <div>${escapeHtml(data.domain_analysis || '无')}</div>
+        </div>
+        <div class="ai-item">
+          <div class="ai-title">注册商分析</div>
+          <div>${escapeHtml(data.registrar_analysis || '无')}</div>
+        </div>
+        <div class="ai-item">
+          <div class="ai-title">DNSSEC 分析</div>
+          <div>${escapeHtml(data.dnssec_analysis || '无')}</div>
+        </div>
+        <div class="ai-item">
+          <div class="ai-title">NS 服务器</div>
+          <div>${escapeHtml(data.ns_analysis || '无')}</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+$('searchBtn').addEventListener('click', queryWhois);
+$('domainInput').addEventListener('keydown', event => {
+  if (event.key === 'Enter') queryWhois();
+});
+</script>
+</body>
+</html>
