@@ -16,7 +16,6 @@
 AI WHOIS LOOKUP 是一个基于 Cloudflare Worker 的请求转发与 WHOIS 查询辅助服务。用户请求经由 Cloudflare 边缘网络及本项目的 Worker 逻辑处理后，转发至上游服务（WHOIS 数据源或自定义端点）。
 
 **数据流路径**：
-```text
 用户设备 → Cloudflare 边缘节点 → Cloudflare Worker (本服务) → 上游服务(WHOIS/API)
 因此，在使用本服务过程中，请求信息可能被 Cloudflare、本服务逻辑以及目标上游服务处理。
 
@@ -178,7 +177,6 @@ AI WHOIS LOOKUP · 边缘转发隐私声明 | 生效版本 20260606
 🗃️ KV / D1 / R2 扩展存储（按需）
 
 🔄 请求转发流程
-text
 用户客户端
     │
     ▼
